@@ -9,6 +9,7 @@
 //SEND, to send request for data TO megasquirt
 //#define SEND
 #include <ACAN2515.h>
+#include <FlexCAN.h>
 
 //——————————————————————————————————————————————————————————————————————————————
 // If you use CAN-BUS shield (http://wiki.seeedstudio.com/CAN-BUS_Shield_V2.0/) with Arduino Uno,
