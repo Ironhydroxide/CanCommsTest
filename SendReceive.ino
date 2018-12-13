@@ -5,9 +5,9 @@
 //Error checking, remove comment to output serial debug
 //#define ERRORCHECK
 //Convert, to output data conversion from Megasquirt 29bit CANBUS
-#define CONVERT
+//#define CONVERT
 //SEND, to send request for data TO megasquirt
-#define SEND
+//#define SEND
 #include <ACAN2515.h>
 
 //——————————————————————————————————————————————————————————————————————————————
@@ -18,6 +18,7 @@
 
 static const byte MCP2515_CS  = 10 ; // CS input of MCP2515 (adapt to your design) 
 static const byte MCP2515_INT =  2 ; // INT output of MCP2515 (adapt to your design)
+static const byte controllerID = 8;// controllerID
 
 uint32_t prevmillis = 0;
 uint32_t currentmillis = 0;
@@ -82,7 +83,7 @@ void setup () {
 
 //——————————————————————————————————————————————————————————————————————————————
 
-uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint16_t table, uint32_t offset) 
+uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_t offset) 
 {
 	uint32_t canSendID = 0x00000000;
 	uint32_t tempCanSendID = 0x00000000;
@@ -274,6 +275,43 @@ uint32_t buildRequestData(uint8_t requestTable, uint16_t requestOffset, byte req
 	return data32;
 }
 
+bool respondToRequest(uint8_t requestTable, uint16_t requestOffset, byte requestLen, byte fromID)
+{
+	static uint32_t egtholder;
+	static int x;
+	uint32_t temp = 0;
+	if (x==1)
+	{
+		egtholder = egtholder + 1;
+		if (egtholder >= 4094)
+		{
+			x = 0;
+		}
+	}
+	else
+	{
+		egtholder = egtholder - 1;
+		if (egtholder <= 1)
+		{
+			x = 1;
+		}
+	}
+	CANMessage rspFrame;//setup message frame
+	rspFrame.len = requestLen;//put request length as response length
+	rspFrame.ext = true; //set Extended bit.
+	//uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_t offset) 
+	rspFrame.id = buildCANID(controllerID, fromID, 2, requestTable, requestOffset);
+	rspFrame.data[1] = egtholder & 0x00FF;
+	temp = egtholder & 0xFF00;
+	temp = temp >> 16;
+	rspFrame.data[0] = temp;
+	#ifdef CONVERT
+		Serial.print("egtholder:");
+		Serial.println(egtholder);
+	#endif
+	
+	return can.tryToSend (rspFrame);
+}
 void loop () {
 	byte fromID = 0x0;			//0-14 allowed
 	byte toID = 0x0;			//0-14 allowed
@@ -294,7 +332,7 @@ void loop () {
 	  
 	currentmillis = millis();
 	  
-	fromID = 12;
+	fromID = 8;
 	toID = 0;
 	type = 1;
 	table = 7;
@@ -305,7 +343,7 @@ void loop () {
 	
 	
 	#ifdef SEND
-		//uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint16_t table, uint32_t offset)
+		//uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_t offset)
 		canSendID = buildCANID(fromID, toID, type, table, offset);
 		//uint32_t buildRequestData(uint8_t requestTable, uint16_t requestOffset, byte requestLen)
 		frame.data32[0] = buildRequestData(requestTable, requestOffset, requestLen);
@@ -364,7 +402,7 @@ void loop () {
 		offset = getOffset(frame.id);
 		
 		Serial.print ("Received: ") ;
-		Serial.print (frame.id, HEX) ;
+		Serial.print (toID, HEX) ;
 		Serial.print (" [");
 		Serial.print (frame.len, DEC);
 		Serial.print ("] ");
@@ -381,6 +419,18 @@ void loop () {
 			requestTable = getRequestTable(frame.data[0]);
 			requestOffset = getRequestOffset(frame.data[1], frame.data[2]);
 			requestLen = getRequestLength(frame.data[2]);
+			
+			if(toID == controllerID)
+			{
+				if (respondToRequest(requestTable, requestOffset, requestLen, fromID) == 1)
+				{
+					Serial.println ("Reply Success");
+				}
+				else
+				{
+					Serial.println("Reply Failed");
+				}
+			}
 		}
 		#ifdef CONVERT
 			Serial.print("Oneline_f:");
