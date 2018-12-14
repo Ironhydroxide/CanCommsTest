@@ -1,5 +1,5 @@
 //——————————————————————————————————————————————————————————————————————————————
-//  ACAN2515 to configure CANBUS for Megasquirt
+//  IFCT(Improved FlexCAN Teensy) to configure CANBUS for Megasquirt, https://github.com/tonton81/IFCT
 //——————————————————————————————————————————————————————————————————————————————
 
 //Error checking, remove comment to output serial debug
@@ -8,81 +8,118 @@
 //#define CONVERT
 //SEND, to send request for data TO megasquirt
 //#define SEND
-#include <ACAN2515.h>
-#include <FlexCAN.h>
+#include <IFCT.h>
 
 //——————————————————————————————————————————————————————————————————————————————
-// If you use CAN-BUS shield (http://wiki.seeedstudio.com/CAN-BUS_Shield_V2.0/) with Arduino Uno,
-// use B connections for MISO, MOSI, SCK, #10 for CS,
-// #2 for INT.
+// Global Variables
+// 
+// 
 //——————————————————————————————————————————————————————————————————————————————
-
-static const byte MCP2515_CS  = 10 ; // CS input of MCP2515 (adapt to your design) 
-static const byte MCP2515_INT =  2 ; // INT output of MCP2515 (adapt to your design)
 static const byte controllerID = 8;// controllerID
-
+static CAN_message_t outMsg, inMsg;
 uint32_t prevmillis = 0;
 uint32_t currentmillis = 0;
 
 //——————————————————————————————————————————————————————————————————————————————
-//  MCP2515 Driver object
+//  
 //——————————————————————————————————————————————————————————————————————————————
 
-ACAN2515 can (MCP2515_CS, SPI, MCP2515_INT) ;
 
 //——————————————————————————————————————————————————————————————————————————————
-//  MCP2515 Quartz: adapt to your design
+//  
 //——————————————————————————————————————————————————————————————————————————————
 
-static const uint32_t QUARTZ_FREQUENCY = 16UL * 1000UL * 1000UL ; // 16 MHz
 
 //——————————————————————————————————————————————————————————————————————————————
 //   SETUP
 //——————————————————————————————————————————————————————————————————————————————
 
 void setup () {
-//--- Start serial
-  Serial.begin (115200) ;
-//--- Wait for serial 
-  while (!Serial) {
-  }
-//--- Begin SPI
-  SPI.begin () ;
 //--- Configure ACAN2515
-  Serial.println ("Configure ACAN2515") ;
-  ACAN2515Settings settings (QUARTZ_FREQUENCY, 500UL * 1000UL) ; // CAN bit rate 500 kb/s
-  settings.mRequestedMode = ACAN2515RequestedMode::NormalMode ; // Select normal mode
-  const uint32_t errorCode = can.begin (settings, [] { can.isr () ; }) ;
-  if (errorCode == 0) {
-    Serial.print ("Bit Rate prescaler: ") ;
-    Serial.println (settings.mBitRatePrescaler) ;
-    Serial.print ("Propagation Segment: ") ;
-    Serial.println (settings.mPropagationSegment) ;
-    Serial.print ("Phase segment 1: ") ;
-    Serial.println (settings.mPhaseSegment1) ;
-    Serial.print ("Phase segment 2: ") ;
-    Serial.println (settings.mPhaseSegment2) ;
-    Serial.print ("SJW:") ;
-    Serial.println (settings.mSJW) ;
-    Serial.print ("Triple Sampling: ") ;
-    Serial.println (settings.mTripleSampling ? "yes" : "no") ;
-    Serial.print ("Actual bit rate: ") ;
-    Serial.print (settings.actualBitRate ()) ;
-    Serial.println (" bit/s") ;
-    Serial.print ("Exact bit rate ? ") ;
-    Serial.println (settings.exactBitRate () ? "yes" : "no") ;
-    Serial.print ("Sample point: ") ;
-    Serial.print (settings.samplePointFromBitStart ()) ;
-    Serial.println ("%") ;
-  }else{
-    Serial.print ("Configuration error 0x") ;
-    Serial.println (errorCode, HEX) ;
-  }
+  Serial.println ("Configure IFCT") ;
+  Can0.setBaudRate(500000); // CAN bit rate 500 kb/s
+  Can0.enableFIFO();//set mode to First in First out (no mailboxes)
+  Can0.enableFIFOInterrupt();//set mode to flag interrupt routine on message receipt
+  Can0.onReceive(can0ISR);//fill with ISR
+  Can0.intervalTimer();//enable queue system and run callback in background (no idea what this does)
 }
 
 
-
+// ISR
 //——————————————————————————————————————————————————————————————————————————————
+void can0ISR(const CAN_message_t &inMsg)
+{//global callback
+	byte fromID = 0x0;			//0-14 allowed
+	byte toID = 0x0;			//0-14 allowed
+	uint8_t type = 0x00;		//0-14, 0x80, 0x81, and 0x82 allowed
+	uint8_t table = 0x00;		//0-31, 0xF0-0xF8 allowed
+	uint8_t requestTable = 0x00;
+	uint16_t offset = 0x0000;	//0-2056 allowed dependant on Table
+	uint16_t requestOffset = 0x0000;
+	byte requestLen = 0x0;
+	char output[9] = ""; 
+
+
+	fromID = getFromID(inMsg.id);
+	toID = getToID(inMsg.id);
+	table = getTable(inMsg.id);
+	type = getType(inMsg.id);
+	offset = getOffset(inMsg.id);
+	
+	Serial.print ("Received: ") ;
+	Serial.print (toID, HEX) ;
+	Serial.print (" [");
+	Serial.print (inMsg.len, DEC);
+	Serial.print ("] ");
+	for (x=0; x<inMsg.len; x++){
+		
+		sprintf(output, "%02X", inMsg.buf[x]);
+		Serial.print(output);
+		Serial.print (" ");			
+		}
+	Serial.println ("");
+	if (type == 1)
+	{
+		requestTable = getRequestTable(inMsg.buf[0]);
+		requestOffset = getRequestOffset(inMsg.buf[1], inMsg.buf[2]);
+		requestLen = getRequestLength(inMsg.buf[2]);
+		
+		if(toID == controllerID)
+		{
+			if (respondToRequest(requestTable, requestOffset, requestLen, fromID) == 1)
+			{
+				Serial.println ("Reply Success");
+			}
+			else
+			{
+				Serial.println("Reply Failed");
+			}
+		}
+	}
+	#ifdef CONVERT
+		Serial.print("Oneline_f:");
+		Serial.print(fromID);
+		Serial.print("_t:");
+		Serial.print(toID);
+		Serial.print("_table:");
+		Serial.print(table);
+		Serial.print("_type:");
+		Serial.print(type);
+		Serial.print("_Offset:");
+		Serial.println(offset);
+		if(type == 1)
+		{
+			Serial.print("reply to:table:");
+			Serial.print(requestTable);
+			Serial.print("_offset:");
+			Serial.print(requestOffset);
+			Serial.print("_length:");
+			Serial.println(requestLen);
+		}
+		
+	#endif
+
+}
 
 uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_t offset) 
 {
@@ -325,11 +362,11 @@ void loop () {
 	byte requestLen = 0x0;
 	uint8_t data[9] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //0x0-0x8 allowed for all
 	uint32_t canSendID = 0x00000000; 
+	uint32_t requestData = 0x00000000;
 
 	int x = 0;
 	char output[4] = ""; 
 	uint16_t sendtime = 1000; //time in ms for sending
-	CANMessage frame ;
 	  
 	currentmillis = millis();
 	  
@@ -347,10 +384,15 @@ void loop () {
 		//uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_t offset)
 		canSendID = buildCANID(fromID, toID, type, table, offset);
 		//uint32_t buildRequestData(uint8_t requestTable, uint16_t requestOffset, byte requestLen)
-		frame.data32[0] = buildRequestData(requestTable, requestOffset, requestLen);
-		frame.ext = true; //set Extended bit. 
-		frame.id = canSendID; //write canSendID to frame
-		frame.len = 3; // 3 Long
+		requestData = buildRequestData(requestTable, requestOffset, requestLen);
+		outMsg.buf[0] = requestData >> 24;
+		outMsg.buf[1] = requestData >> 16;
+		outMsg.buf[2] = requestData >> 8;
+		outMsg.buf[3] = requestData;
+		
+		outMsg.ext = true; //set Extended bit. 
+		outMsg.id = canSendID; //write canSendID to frame
+		outMsg.len = 3; // 3 Long
 		
 		
 		if ((currentmillis - prevmillis) >= sendtime) 
@@ -360,12 +402,12 @@ void loop () {
 			const bool ok = can.tryToSend (frame) ;
 			if (ok) {
 				Serial.print ("Sent:     ") ;
-				Serial.print (frame.id, HEX);
+				Serial.print (outMsg.id, HEX);
 				Serial.print (" [");
-				Serial.print (frame.len, DEC);
+				Serial.print (outMsg.len, DEC);
 				Serial.print ("] ");
-				for (x=0; x<frame.len; x++){
-					sprintf(output, "%02X", frame.data[x]);
+				for (x=0; x<outMsg.len; x++){
+					sprintf(output, "%02X", outMsg.buf[x]);
 					Serial.print(output);
 					//Serial.print (frame.data[x], HEX);
 					Serial.print (" ");
@@ -394,68 +436,7 @@ void loop () {
 			}
 		}
 	#endif
-	if (can.receive (frame)) 
-	{
-		fromID = getFromID(frame.id);
-		toID = getToID(frame.id);
-		table = getTable(frame.id);
-		type = getType(frame.id);
-		offset = getOffset(frame.id);
-		
-		Serial.print ("Received: ") ;
-		Serial.print (toID, HEX) ;
-		Serial.print (" [");
-		Serial.print (frame.len, DEC);
-		Serial.print ("] ");
-		for (x=0; x<frame.len; x++){
-			
-			sprintf(output, "%02X", frame.data[x]);
-			Serial.print(output);
-			//Serial.print (frame.data[x], HEX);
-			Serial.print (" ");			
-			}
-		Serial.println ("");
-		if (type == 1)
-		{
-			requestTable = getRequestTable(frame.data[0]);
-			requestOffset = getRequestOffset(frame.data[1], frame.data[2]);
-			requestLen = getRequestLength(frame.data[2]);
-			
-			if(toID == controllerID)
-			{
-				if (respondToRequest(requestTable, requestOffset, requestLen, fromID) == 1)
-				{
-					Serial.println ("Reply Success");
-				}
-				else
-				{
-					Serial.println("Reply Failed");
-				}
-			}
-		}
-		#ifdef CONVERT
-			Serial.print("Oneline_f:");
-			Serial.print(fromID);
-			Serial.print("_t:");
-			Serial.print(toID);
-			Serial.print("_table:");
-			Serial.print(table);
-			Serial.print("_type:");
-			Serial.print(type);
-			Serial.print("_Offset:");
-			Serial.println(offset);
-			if(type == 1)
-			{
-				Serial.print("reply to:table:");
-				Serial.print(requestTable);
-				Serial.print("_offset:");
-				Serial.print(requestOffset);
-				Serial.print("_length:");
-				Serial.println(requestLen);
-			}
-			
-		#endif
-	}
+	
 }
 
 //——————————————————————————————————————————————————————————————————————————————
