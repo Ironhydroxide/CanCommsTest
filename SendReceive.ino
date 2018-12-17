@@ -1,5 +1,5 @@
 //——————————————————————————————————————————————————————————————————————————————
-//  ACAN2515 to configure CANBUS for Megasquirt
+//  IFCT (Improved FlexCAN for Teensy) to configure CANBUS for Megasquirt
 //——————————————————————————————————————————————————————————————————————————————
 
 //Error checking, remove comment to output serial debug
@@ -8,82 +8,127 @@
 //#define CONVERT
 //SEND, to send request for data TO megasquirt
 //#define SEND
-#include <ACAN2515.h>
-#include <FlexCAN.h>
+
+#include <IFCT.h>
 
 //——————————————————————————————————————————————————————————————————————————————
-// If you use CAN-BUS shield (http://wiki.seeedstudio.com/CAN-BUS_Shield_V2.0/) with Arduino Uno,
-// use B connections for MISO, MOSI, SCK, #10 for CS,
-// #2 for INT.
+// 
+// 
+// 
 //——————————————————————————————————————————————————————————————————————————————
-
-static const byte MCP2515_CS  = 10 ; // CS input of MCP2515 (adapt to your design) 
-static const byte MCP2515_INT =  2 ; // INT output of MCP2515 (adapt to your design)
 static const byte controllerID = 8;// controllerID
 
 uint32_t prevmillis = 0;
 uint32_t currentmillis = 0;
 
 //——————————————————————————————————————————————————————————————————————————————
-//  MCP2515 Driver object
+// 
 //——————————————————————————————————————————————————————————————————————————————
 
-ACAN2515 can (MCP2515_CS, SPI, MCP2515_INT) ;
-
 //——————————————————————————————————————————————————————————————————————————————
-//  MCP2515 Quartz: adapt to your design
+//  
 //——————————————————————————————————————————————————————————————————————————————
 
-static const uint32_t QUARTZ_FREQUENCY = 16UL * 1000UL * 1000UL ; // 16 MHz
 
 //——————————————————————————————————————————————————————————————————————————————
 //   SETUP
 //——————————————————————————————————————————————————————————————————————————————
 
 void setup () {
-//--- Start serial
-  Serial.begin (115200) ;
-//--- Wait for serial 
-  while (!Serial) {
-  }
-//--- Begin SPI
-  SPI.begin () ;
-//--- Configure ACAN2515
-  Serial.println ("Configure ACAN2515") ;
-  ACAN2515Settings settings (QUARTZ_FREQUENCY, 500UL * 1000UL) ; // CAN bit rate 500 kb/s
-  settings.mRequestedMode = ACAN2515RequestedMode::NormalMode ; // Select normal mode
-  const uint32_t errorCode = can.begin (settings, [] { can.isr () ; }) ;
-  if (errorCode == 0) {
-    Serial.print ("Bit Rate prescaler: ") ;
-    Serial.println (settings.mBitRatePrescaler) ;
-    Serial.print ("Propagation Segment: ") ;
-    Serial.println (settings.mPropagationSegment) ;
-    Serial.print ("Phase segment 1: ") ;
-    Serial.println (settings.mPhaseSegment1) ;
-    Serial.print ("Phase segment 2: ") ;
-    Serial.println (settings.mPhaseSegment2) ;
-    Serial.print ("SJW:") ;
-    Serial.println (settings.mSJW) ;
-    Serial.print ("Triple Sampling: ") ;
-    Serial.println (settings.mTripleSampling ? "yes" : "no") ;
-    Serial.print ("Actual bit rate: ") ;
-    Serial.print (settings.actualBitRate ()) ;
-    Serial.println (" bit/s") ;
-    Serial.print ("Exact bit rate ? ") ;
-    Serial.println (settings.exactBitRate () ? "yes" : "no") ;
-    Serial.print ("Sample point: ") ;
-    Serial.print (settings.samplePointFromBitStart ()) ;
-    Serial.println ("%") ;
-  }else{
-    Serial.print ("Configuration error 0x") ;
-    Serial.println (errorCode, HEX) ;
-  }
+
+
+//--- Configure IFCT
+
+  pinMode(2, OUTPUT); // for the transceiver enable pin
+  Serial.println ("Configure IFCT 500,000b/s") ;
+  Can0.setBaudRate(500000);//set rate for IFCT to 500kb/s to match MS comms
+  Can0.enableFIFO();//enable First in First Out mode
 }
 
 
 
 //——————————————————————————————————————————————————————————————————————————————
+// Incomming Message ISR
+//——————————————————————————————————————————————————————————————————————————————
+void incommingMSMessage(const CAN_message_t &inMsg)
+{
+	byte fromID = 0x0;			//0-14 allowed
+	byte toID = 0x0;			//0-14 allowed
+	byte requestLen = 0x0;
+	uint8_t type = 0x00;		//0-14, 0x80, 0x81, and 0x82 allowed
+	uint8_t table = 0x00;		//0-31, 0xF0-0xF8 allowed
+	uint8_t requestTable = 0x00;
+	uint16_t offset = 0x0000;	//0-2056 allowed dependant on Table
+	uint16_t requestOffset = 0x0000;	
+	uint32_t canSendID = 0x00000000; 
+	int x = 0;
+	char output[4] = ""; 
+	uint16_t sendtime = 1000; //time in ms for sending
 
+	fromID = getFromID(inMsg.id);
+	toID = getToID(inMsg.id);
+	table = getTable(inMsg.id);
+	type = getType(inMsg.id);
+	offset = getOffset(inMsg.id);
+	
+	Serial.print ("Received: ") ;
+	Serial.print (toID, HEX) ;
+	Serial.print (" [");
+	Serial.print (inMsg.len, DEC);
+	Serial.print ("] ");
+	for (x=0; x<inMsg.len; x++){
+		
+		sprintf(output, "%02X", inMsg.buf[x]);
+		Serial.print(output);
+		Serial.print (" ");			
+		}
+	Serial.println ("");
+	#ifdef CONVERT
+		Serial.print("Oneline_f:");
+		Serial.print(fromID);
+		Serial.print("_t:");
+		Serial.print(toID);
+		Serial.print("_table:");
+		Serial.print(table);
+		Serial.print("_type:");
+		Serial.print(type);
+		Serial.print("_Offset:");
+		Serial.println(offset);
+		if(type == 1)
+		{
+			Serial.print("reply to:table:");
+			Serial.print(getRequestTable(inMsg.buf[0]));
+			Serial.print("_offset:");
+			Serial.print(getRequestOffset(inMsg.buf[1],inMsg.buf[2]));
+			Serial.print("_length:");
+			Serial.println(getRequestLen(inMsg.buf[2]));
+		}
+		
+	#endif
+	if (type == 1)
+	{
+		requestTable = getRequestTable(inMsg.buf[0]);
+		requestOffset = getRequestOffset(inMsg.buf[1], inMsg.buf[2]);
+		requestLen = getRequestLen(inMsg.buf[2]);
+		
+		if(toID == controllerID)
+		{
+			if (respondToRequest(requestTable, requestOffset, requestLen, fromID) == 1)
+			{
+				Serial.println ("Reply Success");
+			}
+			else
+			{
+				Serial.println("Reply Failed");
+			}
+		}
+	}
+}
+
+
+//——————————————————————————————————————————————————————————————————————————————
+// Build ID from: FromID, ToID, Type, Table, and offset (megasquirt 29 bit ID's)
+//——————————————————————————————————————————————————————————————————————————————
 uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_t offset) 
 {
 	uint32_t canSendID = 0x00000000;
@@ -149,6 +194,9 @@ uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_
 	return canSendID;
 }
 
+//——————————————————————————————————————————————————————————————————————————————
+// Get MS controller FROM ID from incomming 29 bit ID
+//——————————————————————————————————————————————————————————————————————————————
 uint8_t getFromID(uint32_t canReceiveID)
 {
 	uint8_t fromID = 0x00;
@@ -159,6 +207,9 @@ uint8_t getFromID(uint32_t canReceiveID)
 	return fromID;
 }
 
+//——————————————————————————————————————————————————————————————————————————————
+// get MS controller TO ID from incommming 29 bit ID
+//——————————————————————————————————————————————————————————————————————————————
 uint8_t getToID(uint32_t canReceiveID)
 {
 	uint8_t toID = 0x00;
@@ -169,6 +220,9 @@ uint8_t getToID(uint32_t canReceiveID)
 	return toID;
 }
 
+//——————————————————————————————————————————————————————————————————————————————
+// Get message type from incomming 29 bit ID
+//——————————————————————————————————————————————————————————————————————————————
 uint8_t getType(uint32_t canReceiveID)
 {
 	uint8_t type = 0x00;
@@ -179,6 +233,9 @@ uint8_t getType(uint32_t canReceiveID)
 	return type;
 }
 
+//——————————————————————————————————————————————————————————————————————————————
+// Get Table from incomming 29 bit ID
+//——————————————————————————————————————————————————————————————————————————————
 uint8_t getTable(uint32_t canReceiveID)
 {
 	uint8_t table = 0x00;
@@ -194,6 +251,9 @@ uint8_t getTable(uint32_t canReceiveID)
 	return table;
 }
 
+//——————————————————————————————————————————————————————————————————————————————
+// get offset from incomming 29 bit ID
+//——————————————————————————————————————————————————————————————————————————————
 uint16_t getOffset(uint32_t canReceiveID)
 {
 	uint16_t offset = 0x0000;
@@ -203,6 +263,10 @@ uint16_t getOffset(uint32_t canReceiveID)
 	
 	return offset;
 }
+
+//——————————————————————————————————————————————————————————————————————————————
+// get request table from incommming data (tablet to respond to)
+//——————————————————————————————————————————————————————————————————————————————
 uint8_t getRequestTable(uint8_t data0)
 {
 	uint8_t requestTable = 0x00;
@@ -215,6 +279,9 @@ uint8_t getRequestTable(uint8_t data0)
 	return requestTable;
 }
 
+//——————————————————————————————————————————————————————————————————————————————
+// get request offset from incomming data (offset to respond to)
+//——————————————————————————————————————————————————————————————————————————————
 uint16_t getRequestOffset(uint8_t data1, uint8_t data2)
 {
 	uint16_t requestOffset = 0x0000;
@@ -230,7 +297,10 @@ uint16_t getRequestOffset(uint8_t data1, uint8_t data2)
 	return requestOffset;
 }
 
-byte getRequestLength(uint8_t data2)
+//——————————————————————————————————————————————————————————————————————————————
+// get requested lenght of data to respond with
+//——————————————————————————————————————————————————————————————————————————————
+byte getRequestLen(uint8_t data2)
 {
 	byte requestLen = 0x0;
 	#ifdef ERRORCHECK
@@ -242,6 +312,9 @@ byte getRequestLength(uint8_t data2)
 	return requestLen;
 }
 
+//——————————————————————————————————————————————————————————————————————————————
+// Build data for request for data messages (respond to table, offset, and with lenght)
+//——————————————————————————————————————————————————————————————————————————————
 uint32_t buildRequestData(uint8_t requestTable, uint16_t requestOffset, byte requestLen)
 {	//NOTE!!!! data must be inverted (first byte to send needs to be last) in order to work correctly with 
 	//data32[x] array in ACAN2515 Library
@@ -276,8 +349,12 @@ uint32_t buildRequestData(uint8_t requestTable, uint16_t requestOffset, byte req
 	return data32;
 }
 
+//——————————————————————————————————————————————————————————————————————————————
+// Respond to type 1 message (message request)
+//——————————————————————————————————————————————————————————————————————————————
 bool respondToRequest(uint8_t requestTable, uint16_t requestOffset, byte requestLen, byte fromID)
 {
+	CAN_message_t outMsg; //setup message for CAN
 	static uint32_t egtholder;
 	static int x;
 	uint32_t temp = 0;
@@ -297,23 +374,24 @@ bool respondToRequest(uint8_t requestTable, uint16_t requestOffset, byte request
 			x = 1;
 		}
 	}
-	CANMessage rspFrame;//setup message frame
-	rspFrame.len = requestLen;//put request length as response length
-	rspFrame.ext = true; //set Extended bit.
+	outMsg.len = requestLen;//put request length as response length
+	outMsg.flags.extended = true; //set Extended bit.
 	//uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_t offset) 
-	rspFrame.id = buildCANID(controllerID, fromID, 2, requestTable, requestOffset);
-	rspFrame.data[1] = egtholder & 0x00FF;
+	outMsg.id = buildCANID(controllerID, fromID, 2, requestTable, requestOffset);
+	outMsg.buf[1] = egtholder & 0x00FF;
 	temp = egtholder & 0xFF00;
 	temp = temp >> 16;
-	rspFrame.data[0] = temp;
+	outMsg.buf[0] = temp;
 	#ifdef CONVERT
 		Serial.print("egtholder:");
 		Serial.println(egtholder);
 	#endif
 	
-	return can.tryToSend (rspFrame);
+	Can0.write(outMsg);
 }
+
 void loop () {
+	CAN_message_t inMsg, outMsg;
 	byte fromID = 0x0;			//0-14 allowed
 	byte toID = 0x0;			//0-14 allowed
 	uint8_t type = 0x00;		//0-14, 0x80, 0x81, and 0x82 allowed
@@ -324,13 +402,11 @@ void loop () {
 	byte len = 0x0;				//0-7 allowed
 	byte requestLen = 0x0;
 	uint8_t data[9] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //0x0-0x8 allowed for all
-	uint32_t canSendID = 0x00000000; 
+	uint32_t requestData = 0x00000000; 
 
 	int x = 0;
 	char output[4] = ""; 
 	uint16_t sendtime = 1000; //time in ms for sending
-	CANMessage frame ;
-	  
 	currentmillis = millis();
 	  
 	fromID = 8;
@@ -344,118 +420,67 @@ void loop () {
 	
 	
 	#ifdef SEND
-		//uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_t offset)
-		canSendID = buildCANID(fromID, toID, type, table, offset);
-		//uint32_t buildRequestData(uint8_t requestTable, uint16_t requestOffset, byte requestLen)
-		frame.data32[0] = buildRequestData(requestTable, requestOffset, requestLen);
-		frame.ext = true; //set Extended bit. 
-		frame.id = canSendID; //write canSendID to frame
-		frame.len = 3; // 3 Long
-		
 		
 		if ((currentmillis - prevmillis) >= sendtime) 
 		{		  
 			prevmillis = currentmillis;
 			
-			const bool ok = can.tryToSend (frame) ;
-			if (ok) {
-				Serial.print ("Sent:     ") ;
-				Serial.print (frame.id, HEX);
-				Serial.print (" [");
-				Serial.print (frame.len, DEC);
-				Serial.print ("] ");
-				for (x=0; x<frame.len; x++){
-					sprintf(output, "%02X", frame.data[x]);
-					Serial.print(output);
-					//Serial.print (frame.data[x], HEX);
-					Serial.print (" ");
-				}
-				Serial.println ("");
-				#ifdef CONVERT
-					Serial.print("sending_f:");
-					Serial.print(fromID);
-					Serial.print("_t:");
-					Serial.print(toID);
-					Serial.print("_table:");
-					Serial.print(table);
-					Serial.print("_type:");
-					Serial.print(type);
-					Serial.print("_Offset:");
-					Serial.print(offset);
-					Serial.print("_ReturnTable:");
-					Serial.print(requestTable);
-					Serial.print("_ReturnOffset:");
-					Serial.print(requestOffset);
-					Serial.print("_Ret.DataLength:");
-					Serial.println(requestLen);
-				#endif
-			}else{
-				Serial.println ("Send failure") ;
+			//uint32_t buildRequestData(uint8_t requestTable, uint16_t requestOffset, byte requestLen)
+			requestData = buildRequestData(requestTable, requestOffset, requestLen);
+			
+			outMsg.buf[0] = requestData >> 24;
+			outMsg.buf[1] = requestData >> 16;
+			outMsg.buf[2] = requestData >> 8;
+			outMsg.buf[3] = requestData;
+			
+			
+			outMsg.flags.extended = true; //set Extended bit. 
+			outMsg.id = buildCANID(fromID, toID, type, table, offset); //write canSendID to frame
+			outMsg.len = 3; // 3 Long
+			
+			
+			Can0.write(outMsg);
+			
+			Serial.print ("Sent:     ") ;
+			Serial.print (outMsg.id, HEX);
+			Serial.print (" [");
+			Serial.print (outMsg.len, DEC);
+			Serial.print ("] ");
+			for (x=0; x<outMsg.len; x++){
+				sprintf(output, "%02X", outMsg.buf[x]);
+				Serial.print(output);
+				//Serial.print (frame.data[x], HEX);
+				Serial.print (" ");
 			}
+			Serial.println ("");
+			#ifdef CONVERT
+				Serial.print("sending_f:");
+				Serial.print(fromID);
+				Serial.print("_t:");
+				Serial.print(toID);
+				Serial.print("_table:");
+				Serial.print(table);
+				Serial.print("_type:");
+				Serial.print(type);
+				Serial.print("_Offset:");
+				Serial.print(offset);
+				Serial.print("_ReturnTable:");
+				Serial.print(requestTable);
+				Serial.print("_ReturnOffset:");
+				Serial.print(requestOffset);
+				Serial.print("_Ret.DataLength:");
+				Serial.println(requestLen);
+			#endif
 		}
 	#endif
-	if (can.receive (frame)) 
+	
+	// check for incomming message on Can0, if so run incommingMessage();
+	if ( Can0.read(inMsg) )
 	{
-		fromID = getFromID(frame.id);
-		toID = getToID(frame.id);
-		table = getTable(frame.id);
-		type = getType(frame.id);
-		offset = getOffset(frame.id);
-		
-		Serial.print ("Received: ") ;
-		Serial.print (toID, HEX) ;
-		Serial.print (" [");
-		Serial.print (frame.len, DEC);
-		Serial.print ("] ");
-		for (x=0; x<frame.len; x++){
-			
-			sprintf(output, "%02X", frame.data[x]);
-			Serial.print(output);
-			//Serial.print (frame.data[x], HEX);
-			Serial.print (" ");			
-			}
-		Serial.println ("");
-		if (type == 1)
-		{
-			requestTable = getRequestTable(frame.data[0]);
-			requestOffset = getRequestOffset(frame.data[1], frame.data[2]);
-			requestLen = getRequestLength(frame.data[2]);
-			
-			if(toID == controllerID)
-			{
-				if (respondToRequest(requestTable, requestOffset, requestLen, fromID) == 1)
-				{
-					Serial.println ("Reply Success");
-				}
-				else
-				{
-					Serial.println("Reply Failed");
-				}
-			}
-		}
-		#ifdef CONVERT
-			Serial.print("Oneline_f:");
-			Serial.print(fromID);
-			Serial.print("_t:");
-			Serial.print(toID);
-			Serial.print("_table:");
-			Serial.print(table);
-			Serial.print("_type:");
-			Serial.print(type);
-			Serial.print("_Offset:");
-			Serial.println(offset);
-			if(type == 1)
-			{
-				Serial.print("reply to:table:");
-				Serial.print(requestTable);
-				Serial.print("_offset:");
-				Serial.print(requestOffset);
-				Serial.print("_length:");
-				Serial.println(requestLen);
-			}
-			
-		#endif
+		incommingMSMessage(inMsg);
 	}
+	//following needs to be run after message received.... 
+	
 }
 
 //——————————————————————————————————————————————————————————————————————————————
