@@ -5,9 +5,9 @@
 //Error checking, remove comment to output serial debug
 //#define ERRORCHECK
 //Convert, to output data conversion from Megasquirt 29bit CANBUS
-//#define CONVERT
+#define CONVERT
 //SEND, to send request for data TO megasquirt
-//#define SEND
+#define SEND
 
 #include <IFCT.h>
 
@@ -16,7 +16,7 @@
 // 
 // 
 //——————————————————————————————————————————————————————————————————————————————
-static const byte controllerID = 8;// controllerID
+static const byte controllerID = 2;// controllerID
 
 uint32_t prevmillis = 0;
 uint32_t currentmillis = 0;
@@ -401,7 +401,6 @@ void loop () {
 	uint16_t requestOffset = 0x0000;
 	byte len = 0x0;				//0-7 allowed
 	byte requestLen = 0x0;
-	uint8_t data[9] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //0x0-0x8 allowed for all
 	uint32_t requestData = 0x00000000; 
 
 	int x = 0;
@@ -409,12 +408,12 @@ void loop () {
 	uint16_t sendtime = 1000; //time in ms for sending
 	currentmillis = millis();
 	  
-	fromID = 8;
+	fromID = 2;
 	toID = 0;
-	type = 1;
+	type = 0;
 	table = 7;
 	requestTable = 14;
-	offset = 66;//Fuel load (kpa)
+	offset = 336;
 	requestOffset = 22;
 	requestLen = 2;
 	
@@ -426,17 +425,19 @@ void loop () {
 			prevmillis = currentmillis;
 			
 			//uint32_t buildRequestData(uint8_t requestTable, uint16_t requestOffset, byte requestLen)
-			requestData = buildRequestData(requestTable, requestOffset, requestLen);
+			//requestData = buildRequestData(requestTable, requestOffset, requestLen);
 			
-			outMsg.buf[0] = requestData >> 24;
-			outMsg.buf[1] = requestData >> 16;
-			outMsg.buf[2] = requestData >> 8;
-			outMsg.buf[3] = requestData;
+			outMsg.buf[0] = 0x66;
+			outMsg.buf[1] = 0x01;
+			//outMsg.buf[0] = requestData;
+			//outMsg.buf[1] = requestData >> 8;
+			//outMsg.buf[2] = requestData >> 16;
+			//outMsg.buf[3] = requestData >> 24;
 			
 			
 			outMsg.flags.extended = true; //set Extended bit. 
-			outMsg.id = buildCANID(fromID, toID, type, table, offset); //write canSendID to frame
-			outMsg.len = 3; // 3 Long
+			outMsg.id = buildCANID(controllerID, toID, type, table, offset); //write canSendID to frame
+			outMsg.len = 2; // 3 Long
 			
 			
 			Can0.write(outMsg);
