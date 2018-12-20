@@ -125,6 +125,13 @@ void incommingMSMessage(const CAN_message_t &inMsg)
 	}
 }
 
+//——————————————————————————————————————————————————————————————————————————————
+// put data in memory from MS message
+//——————————————————————————————————————————————————————————————————————————————
+void canMStoMem(const CAN_message_t &inMsg)
+{
+	
+}
 
 //——————————————————————————————————————————————————————————————————————————————
 // Build ID from: FromID, ToID, Type, Table, and offset (megasquirt 29 bit ID's)
@@ -352,42 +359,17 @@ uint32_t buildRequestData(uint8_t requestTable, uint16_t requestOffset, byte req
 //——————————————————————————————————————————————————————————————————————————————
 // Respond to type 1 message (message request)
 //——————————————————————————————————————————————————————————————————————————————
-bool respondToRequest(uint8_t requestTable, uint16_t requestOffset, byte requestLen, byte fromID)
+bool respondToMSRequest(const CAN_message_t &inMsg)
 {
-	CAN_message_t outMsg; //setup message for CAN
-	static uint32_t egtholder;
-	static int x;
-	uint32_t temp = 0;
-	if (x==1)
-	{
-		egtholder = egtholder + 1;
-		if (egtholder >= 4094)
-		{
-			x = 0;
-		}
-	}
-	else
-	{
-		egtholder = egtholder - 1;
-		if (egtholder <= 1)
-		{
-			x = 1;
-		}
-	}
-	outMsg.len = requestLen;//put request length as response length
-	outMsg.flags.extended = true; //set Extended bit.
-	//uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_t offset) 
-	outMsg.id = buildCANID(controllerID, fromID, 2, requestTable, requestOffset);
-	outMsg.buf[1] = egtholder & 0x00FF;
-	temp = egtholder & 0xFF00;
-	temp = temp >> 16;
-	outMsg.buf[0] = temp;
-	#ifdef CONVERT
-		Serial.print("egtholder:");
-		Serial.println(egtholder);
-	#endif
+	CAN_message_t MSoutMsg; //setup outgoing message for CAN
 	
-	Can0.write(outMsg);
+	MSoutMsg.len = getRequestLen(inMsg.buf[2]);//put request length as response length
+	MSoutMsg.flags.extended = true; //set Extended bit.
+	//uint32_t buildCANID(byte fromID, byte toID, uint8_t type, uint8_t table, uint16_t offset) 
+	MSoutMsg.id = buildCANID(controllerID, getFromID(inMsg.id), 2, getRequestTable(inMsg.buf[0]), getRequestOffset(inMsg.buf[1], inMsg.buf[2]);
+	outMsg.buf[1] = 0x00;//Find and fill message response data here
+	
+	Can0.write(MSoutMsg);
 }
 
 void loop () {
@@ -478,6 +460,59 @@ void loop () {
 	// check for incomming message on Can0, if so run incommingMessage();
 	if ( Can0.read(inMsg) )
 	{
+		switch (getType(inMsg.id))
+		{
+			case 0://poke deposit message into memory
+				canMStoMem(inMsg);//
+				break;
+			case 1://Request for data
+				respondToMSRequest(inMsg);//
+				break;
+			case 2://Reply to request (put message into memory)
+				//
+				break;
+			case 3:
+				Serial.println("error with message, case 3 response.");
+				break;
+			case 4://burn, request to burn data to flash
+				//
+				break;
+			case 5://Request for otumsg set of data
+				//
+				break;
+			case 6://response of an outmsg set of data
+				//
+				break;
+			case 7://extended message, Msg # is in first data byte
+				//
+				break;
+			case 8://forward, message to send data out of teh serial port
+				//
+				break;
+			case 9://CRC request for the CRC of a data table
+				//
+				break;
+			case 11:
+				Serial.println("error with message, case 11 response.");
+				break;
+			case 12://Request message for data (tables 16-31)
+				//
+				break;
+			case 14://Burnack, Response message for burn
+				//
+				break;
+			case 0x80://Prot, Message to get protocol version #
+				//
+				break;
+			case 0x81://msg WCR (not implemented)
+				Serial.println("error with message, case 0x81 response.");
+				break;
+			case 0x82://SPND, command for suspendign and resuming can Polling
+				//
+				break;
+		}
+				
+			
 		incommingMSMessage(inMsg);
 	}
 	//following needs to be run after message received.... 
